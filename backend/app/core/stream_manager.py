@@ -65,6 +65,7 @@ class CameraStreamWorker:
         }
         self.last_alert_time: Dict[str, float] = {}
         self.track_plate_cache: Dict[int, Dict[str, Any]] = {}
+        self.track_person_cache: Dict[int, Dict[str, Any]] = {}
 
     def start(self):
         if not self.is_running:
@@ -322,6 +323,37 @@ class CameraStreamWorker:
                             "is_authorized": is_authorized_friendly_vehicle
                         }
 
+                is_authorized_friendly_person = False
+                matched_person = None
+                person_name = ""
+
+                # 2. FRS Person Face Analysis & Whitelist Verification with Track Caching
+                if cname == "person" and (x2 - x1) > 25 and (y2 - y1) > 25:
+                    if tid in self.track_person_cache and (fps_counter % 20 != 0):
+                        cached_p = self.track_person_cache[tid]
+                        matched_person = cached_p.get("matched_person")
+                        is_authorized_friendly_person = cached_p.get("is_authorized", False)
+                        person_name = cached_p.get("person_name", "")
+                    else:
+                        p_crop = frame[y1:y2, x1:x2]
+                        faces = self.frs_engine.detect_faces(p_crop)
+                        if faces:
+                            fx, fy, fw, fh = faces[0]
+                            face_crop = p_crop[fy:fy+fh, fx:fx+fw]
+                            matched_person = self.frs_engine.match_face(face_crop, person_watchlist)
+                            if matched_person:
+                                p_cat = (matched_person.get("category") or "").lower()
+                                p_threat = (matched_person.get("threat_level") or "").upper()
+                                person_name = matched_person.get("name") or "Authorized"
+                                if any(w in p_cat for w in ["staff", "whitelist", "auth", "friendly", "safe", "vip", "official", "resident", "guard", "patrol"]) or p_threat in ["AUTHORIZED", "LOW", "SAFE", "NONE"]:
+                                    is_authorized_friendly_person = True
+
+                        self.track_person_cache[tid] = {
+                            "matched_person": matched_person,
+                            "is_authorized": is_authorized_friendly_person,
+                            "person_name": person_name
+                        }
+
                 # Helper to create snapshot with highlighted target
                 def _get_evidence_snapshot(target_label: str, target_color: Tuple[int, int, int] = (0, 0, 255)):
                     snap = annotated.copy()
@@ -331,7 +363,7 @@ class CameraStreamWorker:
                     cv2.putText(snap, lbl, (x1 + 4, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
                     return snap
 
-                # 2. Activity & Behavioral Anomaly Check (only for verified persons/vehicles)
+                # 3. Activity & Behavioral Anomaly Check (only for verified persons/vehicles)
                 if (cname == "person" or is_vehicle) and conf >= 0.45:
                     behavior = self.activity_engine.update_track(tid, bbox, cname)
                     for anomaly in behavior["anomalies"]:
@@ -351,9 +383,8 @@ class CameraStreamWorker:
                             )
                         active_alerts.append(anomaly["type"])
 
-                # 3. Virtual Zones Check (Intrusion alerts suppressed ONLY for authorized friendly vehicles)
-                # Only trigger breach for actual persons or vehicles to avoid phantom background shadow alerts
-                if not is_authorized_friendly_vehicle and (cname == "person" or is_vehicle):
+                # 4. Virtual Zones Check (Intrusion alerts suppressed for authorized friendly persons & vehicles)
+                if (not is_authorized_friendly_vehicle) and (not is_authorized_friendly_person) and (cname == "person" or is_vehicle):
                     car_tag = plate_text if plate_text else f"CAR-#{tid}"
                     for z in zones:
                         coords = self.fence_engine.parse_coordinates(z.coordinates)
@@ -423,12 +454,17 @@ class CameraStreamWorker:
                                         )
                                     active_alerts.append("TRIPWIRE_CROSSING")
 
-                # 4. Vehicle Watchlist Alerting & HUD Labeling
+                # 5. Vehicle & Person Watchlist Alerting & HUD Labeling
                 if is_authorized_friendly_vehicle and matched_vehicle:
                     threat_color = (0, 255, 157) # Neon Green / Friendly
                     p_num = matched_vehicle.get("plate_number") or plate_text
                     owner = matched_vehicle.get("owner_name") or "PATROL"
                     label = f"AUTHORIZED: {p_num} [{owner}]"
+                elif is_authorized_friendly_person and matched_person:
+                    threat_color = (0, 255, 157) # Neon Green / Friendly
+                    p_name = matched_person.get("name") or "STAFF"
+                    p_cat = (matched_person.get("category") or "WHITELIST").upper()
+                    label = f"AUTHORIZED: {p_name} [{p_cat}]"
                 elif matched_vehicle:
                     threat_color = (0, 0, 255) # Red / Hotlist Alert
                     p_num = matched_vehicle.get("plate_number") or plate_text
@@ -448,6 +484,25 @@ class CameraStreamWorker:
                             min_cooldown=1.0
                         )
                     active_alerts.append("ANPR_WATCHLIST_MATCH")
+                elif matched_person:
+                    threat_color = (0, 0, 255) # Red / POI Alert
+                    p_name = matched_person.get("name") or "SUSPECT"
+                    cat = (matched_person.get("category") or "POI").upper()
+                    label = f"POI: {p_name} ({cat})"
+                    if cam:
+                        self._trigger_alert(
+                            db=db,
+                            cam=cam,
+                            alert_type="FRS_WATCHLIST_MATCH",
+                            severity=matched_person.get("threat_level") or "CRITICAL",
+                            title=f"POI Match: {p_name}",
+                            description=f"Flagged individual {p_name} ({cat}) spotted on camera.",
+                            object_type="person_poi",
+                            confidence=matched_person.get("similarity", conf),
+                            frame=annotated,
+                            min_cooldown=1.0
+                        )
+                    active_alerts.append("FRS_WATCHLIST_MATCH")
                 else:
                     label = f"#{tid} {cname.upper()} {conf:.2f}"
                     if plate_text:
