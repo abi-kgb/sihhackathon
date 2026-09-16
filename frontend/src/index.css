@@ -1,0 +1,222 @@
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Rajdhani:wght@500;600;700&display=swap');
+
+:root {
+  --bg-primary: #06090e;
+  --bg-secondary: #0b101a;
+  --bg-card: rgba(13, 20, 33, 0.85);
+  --bg-card-hover: rgba(18, 28, 46, 0.95);
+  --border-color: rgba(0, 240, 255, 0.18);
+  --border-glow: rgba(0, 240, 255, 0.4);
+  
+  --accent-cyan: #00f0ff;
+  --accent-green: #00ff9d;
+  --accent-amber: #ffb700;
+  --accent-crimson: #ff2a5f;
+  --accent-purple: #b55fe6;
+  
+  --text-primary: #e6f1f8;
+  --text-secondary: #8da4be;
+  --text-muted: #54687e;
+  
+  --font-tactical: 'Chakra Petch', 'Rajdhani', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-tactical);
+  overflow-x: hidden;
+  min-height: 100vh;
+  background-image: 
+    radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.05) 0%, transparent 70%),
+    linear-gradient(rgba(0, 240, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 240, 255, 0.02) 1px, transparent 1px);
+  background-size: 100% 100%, 40px 40px, 40px 40px;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan);
+}
+
+/* Tactical Glassmorphism Cards */
+.tactical-card {
+  background: var(--bg-card);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  position: relative;
+  transition: all 0.2s ease-in-out;
+}
+
+.tactical-card:hover {
+  border-color: var(--border-glow);
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.08);
+}
+
+/* Corner Accents */
+.tactical-corner {
+  position: relative;
+}
+.tactical-corner::before, .tactical-corner::after {
+  content: '';
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-color: var(--accent-cyan);
+  pointer-events: none;
+}
+.tactical-corner::before {
+  top: -1px;
+  left: -1px;
+  border-top: 2px solid;
+  border-left: 2px solid;
+}
+.tactical-corner::after {
+  bottom: -1px;
+  right: -1px;
+  border-bottom: 2px solid;
+  border-right: 2px solid;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.badge-critical {
+  background: rgba(255, 42, 95, 0.18);
+  color: var(--accent-crimson);
+  border: 1px solid rgba(255, 42, 95, 0.4);
+  box-shadow: 0 0 8px rgba(255, 42, 95, 0.2);
+}
+
+.badge-high {
+  background: rgba(255, 183, 0, 0.18);
+  color: var(--accent-amber);
+  border: 1px solid rgba(255, 183, 0, 0.4);
+}
+
+.badge-medium {
+  background: rgba(0, 240, 255, 0.15);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+}
+
+.badge-low {
+  background: rgba(0, 255, 157, 0.15);
+  color: var(--accent-green);
+  border: 1px solid rgba(0, 255, 157, 0.35);
+}
+
+/* Tactical Buttons */
+.btn-tactical {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: rgba(0, 240, 255, 0.1);
+  border: 1px solid var(--accent-cyan);
+  color: var(--accent-cyan);
+  font-family: var(--font-tactical);
+  font-weight: 600;
+  font-size: 0.85rem;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-tactical:hover {
+  background: var(--accent-cyan);
+  color: #000;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.4);
+}
+
+.btn-danger {
+  background: rgba(255, 42, 95, 0.12);
+  border-color: var(--accent-crimson);
+  color: var(--accent-crimson);
+}
+.btn-danger:hover {
+  background: var(--accent-crimson);
+  color: #fff;
+  box-shadow: 0 0 12px rgba(255, 42, 95, 0.4);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-secondary);
+}
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-primary);
+}
+
+/* Animations */
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 0 0 rgba(255, 42, 95, 0.7); }
+  70% { box-shadow: 0 0 0 10px rgba(255, 42, 95, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 42, 95, 0); }
+}
+
+.alert-pulse {
+  animation: pulse-red 1.5s infinite;
+}
+
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(1000%); }
+}
+
+.scanline-overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(to bottom, transparent 50%, rgba(0, 240, 255, 0.03) 51%, transparent 52%);
+  background-size: 100% 8px;
+  pointer-events: none;
+}
+
+/* Layout Utilities */
+.tactical-grid-layout {
+  display: grid;
+  grid-template-columns: 240px 1fr 340px;
+  height: calc(100vh - 65px);
+  overflow: hidden;
+}
+
+@media (max-width: 1200px) {
+  .tactical-grid-layout {
+    grid-template-columns: 80px 1fr;
+  }
+}
