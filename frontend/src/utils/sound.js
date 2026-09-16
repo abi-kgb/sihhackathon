@@ -134,6 +134,13 @@ class TacticalSoundEngine {
             osc.connect(gain);
             gain.connect(ctx.destination);
 
+            osc.start(now);
+            osc.stop(now + 0.35);
+        } catch (err) {
+            console.error('[Audio] Radar ping error:', err);
+        }
+    }
+
     playAccessGrantedChime() {
         if (this.isMuted) return;
         const ctx = this._getAudioContext();
