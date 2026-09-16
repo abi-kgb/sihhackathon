@@ -42,8 +42,16 @@ export default function App() {
             const newAlert = msg.data;
             setAlerts((prev) => [newAlert, ...prev.slice(0, 99)]);
             
-            // Trigger audio siren if critical
-            if (newAlert.severity === 'CRITICAL') {
+            // Trigger audio siren for perimeter breach, tripwire crossing, hotlists & high/critical threats
+            const isCriticalAlert = 
+                newAlert.severity === 'CRITICAL' || 
+                newAlert.severity === 'HIGH' ||
+                newAlert.alert_type === 'VIRTUAL_FENCE_BREACH' || 
+                newAlert.alert_type === 'TRIPWIRE_CROSSING' ||
+                newAlert.alert_type === 'ANPR_WATCHLIST_MATCH' ||
+                newAlert.alert_type === 'FRS_WATCHLIST_MATCH';
+
+            if (isCriticalAlert) {
                 tacticalSound.playCriticalAlarm();
             } else {
                 tacticalSound.playWarningBeep();

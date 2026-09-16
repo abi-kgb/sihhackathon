@@ -38,17 +38,31 @@ class WebSocketBroadcaster:
             self.disconnect(dead)
 
 broadcaster = WebSocketBroadcaster()
+main_loop = None
 
 def handle_alert_dispatch(alert_data: dict):
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.create_task(broadcaster.broadcast({
-                "type": "NEW_ALERT",
-                "data": alert_data
-            }))
-    except Exception:
-        pass
+    global main_loop
+    if main_loop and main_loop.is_running():
+        try:
+            asyncio.run_coroutine_threadsafe(
+                broadcaster.broadcast({
+                    "type": "NEW_ALERT",
+                    "data": alert_data
+                }),
+                main_loop
+            )
+        except Exception as e:
+            print(f"[AlertDispatch] Error: {e}")
+    else:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(broadcaster.broadcast({
+                    "type": "NEW_ALERT",
+                    "data": alert_data
+                }))
+        except Exception:
+            pass
 
 stream_manager.register_alert_listener(handle_alert_dispatch)
 
@@ -133,6 +147,8 @@ def seed_initial_demo_data():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global main_loop
+    main_loop = asyncio.get_running_loop()
     seed_initial_demo_data()
     db = SessionLocal()
     for cam in db.query(Camera).filter(Camera.is_active == True).all():
