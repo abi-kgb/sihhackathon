@@ -43,46 +43,62 @@ class ANPREngine:
             x, y, w, h = cv2.boundingRect(cnt)
             aspect_ratio = float(w) / max(h, 1)
             area = w * h
-            # License plates standard aspect ratio between 2.0 and 6.0, area constraints
-            if 2.0 <= aspect_ratio <= 6.0 and 800 <= area <= 50000:
+            # License plates standard aspect ratio between 1.5 and 7.0, flexible area constraints
+            if 1.5 <= aspect_ratio <= 7.0 and 100 <= area <= 60000:
                 plate_crop = vehicle_crop[y:y+h, x:x+w]
                 return plate_crop, (x, y, w, h)
 
-        # Fallback: lower 35% of vehicle crop usually contains plate
+        # Fallback: lower 45% of vehicle crop usually contains plate
         vh, vw = vehicle_crop.shape[:2]
-        plate_y = int(vh * 0.65)
-        plate_h = int(vh * 0.30)
-        plate_x = int(vw * 0.20)
-        plate_w = int(vw * 0.60)
+        plate_y = int(vh * 0.55)
+        plate_h = int(vh * 0.40)
+        plate_x = int(vw * 0.10)
+        plate_w = int(vw * 0.80)
         return vehicle_crop[plate_y:plate_y+plate_h, plate_x:plate_x+plate_w], (plate_x, plate_y, plate_w, plate_h)
 
-    def extract_plate_text(self, plate_crop: np.ndarray) -> str:
+    def extract_plate_text(self, plate_crop: np.ndarray, vehicle_crop: Optional[np.ndarray] = None) -> str:
         """
-        Reads alphanumeric license plate characters from the cropped plate image with high-speed downscaling.
+        Reads alphanumeric license plate characters from the cropped plate image with high-speed downscaling
+        and automatic full-vehicle-crop fallback.
         """
-        if plate_crop is None or plate_crop.size == 0:
+        if not self.ocr_reader:
             return ""
 
-        # Normalize plate crop to fast OCR standard dimensions (240x80)
-        try:
-            plate_proc = cv2.resize(plate_crop, (240, 80), interpolation=cv2.INTER_CUBIC)
-            gray = cv2.cvtColor(plate_proc, cv2.COLOR_BGR2GRAY)
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) for crisp characters
-            clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
-            enhanced = clahe.apply(gray)
-        except Exception:
-            enhanced = plate_crop
-
-        if self.ocr_reader:
+        # Attempt 1: OCR on cropped & CLAHE enhanced plate region
+        if plate_crop is not None and plate_crop.size > 0:
             try:
+                plate_proc = cv2.resize(plate_crop, (240, 80), interpolation=cv2.INTER_CUBIC)
+                gray = cv2.cvtColor(plate_proc, cv2.COLOR_BGR2GRAY)
+                clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                enhanced = clahe.apply(gray)
+                
                 results = self.ocr_reader.readtext(enhanced)
                 text_pieces = []
                 for bbox, text, prob in results:
                     clean_text = re.sub(r'[^A-Za-z0-9]', '', text).upper()
-                    if len(clean_text) >= 2 and prob > 0.2:
+                    if len(clean_text) >= 2 and prob > 0.15:
                         text_pieces.append(clean_text)
                 if text_pieces:
-                    return "".join(text_pieces)
+                    combined = "".join(text_pieces)
+                    if len(combined) >= 4:
+                        return combined
+            except Exception:
+                pass
+
+        # Attempt 2: Direct OCR on full vehicle crop (CRAFT text detector locates plate anywhere on car)
+        target_img = vehicle_crop if (vehicle_crop is not None and vehicle_crop.size > 0) else plate_crop
+        if target_img is not None and target_img.size > 0:
+            try:
+                results = self.ocr_reader.readtext(target_img)
+                candidates = []
+                for bbox, text, prob in results:
+                    clean_text = re.sub(r'[^A-Za-z0-9]', '', text).upper()
+                    # License plates standard alphanumeric format (e.g. KA02MM9091, JK02AB, etc.)
+                    if len(clean_text) >= 4 and any(c.isalpha() for c in clean_text) and any(c.isdigit() for c in clean_text):
+                        candidates.append((clean_text, prob))
+                if candidates:
+                    candidates.sort(key=lambda x: len(x[0]), reverse=True)
+                    return candidates[0][0]
             except Exception:
                 pass
 

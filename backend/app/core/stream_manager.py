@@ -306,9 +306,8 @@ class CameraStreamWorker:
                     else:
                         v_crop = frame[y1:y2, x1:x2]
                         plate_res = self.anpr_engine.detect_plate_region(v_crop)
-                        if plate_res:
-                            plate_crop, _ = plate_res
-                            plate_text = self.anpr_engine.extract_plate_text(plate_crop)
+                        plate_crop = plate_res[0] if plate_res else None
+                        plate_text = self.anpr_engine.extract_plate_text(plate_crop, vehicle_crop=v_crop)
                         
                         matched_vehicle = self.anpr_engine.match_watchlist(plate_text, vehicle_watchlist)
                         if matched_vehicle:
