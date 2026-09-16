@@ -180,11 +180,14 @@ class CameraStreamWorker:
 
         fps_counter = 0
         fps_timer = time.time()
+        last_frame_clock = time.time()
         measured_fps = 25.0
+        file_fps = 25.0
 
         cached_zones: List[Any] = []
         cached_person_watchlist: List[Dict[str, Any]] = []
         cached_vehicle_watchlist: List[Dict[str, Any]] = []
+        last_detections: List[Dict[str, Any]] = []
 
         while self.is_running:
             t_start = time.time()
@@ -197,9 +200,14 @@ class CameraStreamWorker:
                         self.cap = None
                     self.cap = self._open_capture(self.stream_type, self.stream_url)
                     self.source_changed = False
+                    last_detections = []
+                    last_frame_clock = time.time()
+                    if self.cap and self.cap.isOpened():
+                        raw_fps = self.cap.get(cv2.CAP_PROP_FPS)
+                        file_fps = raw_fps if (raw_fps and 5.0 <= raw_fps <= 120.0) else 25.0
 
-            # Refresh DB queries every 12 frames (2x per sec) instead of every frame for maximum speed
-            if fps_counter % 12 == 0 or not cached_zones:
+            # Refresh DB queries every 15 frames (2x per sec) for maximum throughput
+            if fps_counter % 15 == 0 or not cached_zones:
                 db.expire_all()
                 cam = db.query(Camera).filter(Camera.id == self.camera_id).first()
                 cached_zones = db.query(VirtualZone).filter(VirtualZone.camera_id == self.camera_id, VirtualZone.is_active == True).all()
@@ -219,6 +227,16 @@ class CameraStreamWorker:
             frame = None
             if self.cap and self.cap.isOpened():
                 try:
+                    # Wall-clock real-time sync: skip frames if AI processing took longer than 1 frame duration
+                    now_clock = time.time()
+                    dt = now_clock - last_frame_clock
+                    last_frame_clock = now_clock
+                    
+                    if self.stream_type == "file" and dt > (1.0 / file_fps):
+                        skip_frames = min(int(dt * file_fps) - 1, 4)
+                        for _ in range(max(0, skip_frames)):
+                            self.cap.grab()
+
                     ret, frame = self.cap.read()
                     if not ret and self.stream_type == "file":
                         self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -230,10 +248,12 @@ class CameraStreamWorker:
             if frame is None or frame.size == 0:
                 frame = self.simulator.generate_frame()
             else:
-                # Downscale 1080p/4K uploaded video frames to 640x480 for real-time 25-30 FPS playback
+                # Fast downscale uploaded video frames to 640x360 for high 30+ FPS throughput
                 fh, fw = frame.shape[:2]
-                if fw > 800 or fh > 600:
-                    frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_AREA)
+                if fw > 640 or fh > 480:
+                    new_w = 640
+                    new_h = int(fh * (640.0 / fw))
+                    frame = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
 
             self.current_raw_frame = frame.copy()
             h, w = frame.shape[:2]
@@ -243,7 +263,13 @@ class CameraStreamWorker:
             else:
                 frame_enhanced = frame
 
-            detections = self.detector.detect(frame_enhanced)
+            # Smart Frame Acceleration: For video files on CPU, perform full neural inference every 2nd frame
+            if self.stream_type == "file" and (fps_counter % 2 != 0) and last_detections:
+                detections = last_detections
+            else:
+                detections = self.detector.detect(frame_enhanced)
+                last_detections = detections
+
             tracks = self.tracker.update(detections)
 
             annotated = frame_enhanced.copy()

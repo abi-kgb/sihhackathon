@@ -37,7 +37,8 @@ class ObjectDetector:
 
         if self.yolo_model is not None:
             try:
-                results = self.yolo_model(frame, conf=self.conf_threshold, verbose=False)
+                # Use imgsz=320 for blazing-fast real-time inference on CPU/GPU
+                results = self.yolo_model(frame, imgsz=320, conf=self.conf_threshold, verbose=False)
                 for r in results:
                     boxes = r.boxes
                     for box in boxes:

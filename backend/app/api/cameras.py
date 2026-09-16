@@ -414,11 +414,11 @@ def generate_mjpeg_stream(camera_id: int, annotated: bool = True):
     while True:
         frame = stream_manager.get_frame(camera_id, annotated=annotated)
         if frame is not None:
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             if ret:
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-        time.sleep(0.04)
+        time.sleep(0.015)
 
 @router.get("/{camera_id}/stream")
 def stream_camera_feed(camera_id: int, annotated: bool = True):
