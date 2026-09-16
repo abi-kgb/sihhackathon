@@ -4,19 +4,38 @@ class TacticalSoundEngine {
     constructor() {
         this.ctx = null;
         this.isMuted = false;
+        this._initUserGestureUnlock();
+    }
+
+    _initUserGestureUnlock() {
+        if (typeof window !== 'undefined') {
+            const unlock = () => {
+                this._getAudioContext();
+                ['click', 'touchstart', 'keydown', 'pointerdown'].forEach(ev => 
+                    window.removeEventListener(ev, unlock)
+                );
+            };
+            ['click', 'touchstart', 'keydown', 'pointerdown'].forEach(ev => 
+                window.addEventListener(ev, unlock, { once: true, passive: true })
+            );
+        }
     }
 
     _getAudioContext() {
-        if (!this.ctx) {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            if (AudioCtx) {
-                this.ctx = new AudioCtx();
+        try {
+            if (!this.ctx) {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (AudioCtx) {
+                    this.ctx = new AudioCtx();
+                }
             }
+            if (this.ctx && this.ctx.state === 'suspended') {
+                this.ctx.resume().catch(() => {});
+            }
+            return this.ctx;
+        } catch (e) {
+            return null;
         }
-        if (this.ctx && this.ctx.state === 'suspended') {
-            this.ctx.resume();
-        }
-        return this.ctx;
     }
 
     setMuted(muted) {
@@ -28,26 +47,36 @@ class TacticalSoundEngine {
         const ctx = this._getAudioContext();
         if (!ctx) return;
 
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+        try {
+            if (ctx.state === 'suspended') {
+                ctx.resume();
+            }
 
-        osc.type = "sawtooth";
-        // Warbling dual-tone siren
-        const now = ctx.currentTime;
-        osc.frequency.setValueAtTime(880, now);
-        osc.frequency.linearRampToValueAtTime(1400, now + 0.15);
-        osc.frequency.linearRampToValueAtTime(880, now + 0.3);
-        osc.frequency.linearRampToValueAtTime(1400, now + 0.45);
-        osc.frequency.linearRampToValueAtTime(880, now + 0.6);
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
 
-        gain.gain.setValueAtTime(0.15, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
+            osc.type = "sawtooth";
+            const now = ctx.currentTime;
+            
+            // Pulsing emergency warble siren
+            osc.frequency.setValueAtTime(800, now);
+            osc.frequency.linearRampToValueAtTime(1500, now + 0.15);
+            osc.frequency.linearRampToValueAtTime(800, now + 0.30);
+            osc.frequency.linearRampToValueAtTime(1500, now + 0.45);
+            osc.frequency.linearRampToValueAtTime(800, now + 0.60);
 
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+            // Louder, clear audible volume
+            gain.gain.setValueAtTime(0.35, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
 
-        osc.start(now);
-        osc.stop(now + 0.65);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.65);
+        } catch (err) {
+            console.error('[Audio] Critical alarm playback error:', err);
+        }
     }
 
     playWarningBeep() {
@@ -55,22 +84,30 @@ class TacticalSoundEngine {
         const ctx = this._getAudioContext();
         if (!ctx) return;
 
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+        try {
+            if (ctx.state === 'suspended') {
+                ctx.resume();
+            }
 
-        osc.type = "sine";
-        const now = ctx.currentTime;
-        osc.frequency.setValueAtTime(650, now);
-        osc.frequency.exponentialRampToValueAtTime(950, now + 0.15);
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
 
-        gain.gain.setValueAtTime(0.1, now);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+            osc.type = "sine";
+            const now = ctx.currentTime;
+            osc.frequency.setValueAtTime(750, now);
+            osc.frequency.exponentialRampToValueAtTime(1100, now + 0.18);
 
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+            gain.gain.setValueAtTime(0.25, now);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
 
-        osc.start(now);
-        osc.stop(now + 0.2);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.22);
+        } catch (err) {
+            console.error('[Audio] Warning beep error:', err);
+        }
     }
 
     playRadarPing() {
@@ -78,22 +115,30 @@ class TacticalSoundEngine {
         const ctx = this._getAudioContext();
         if (!ctx) return;
 
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
+        try {
+            if (ctx.state === 'suspended') {
+                ctx.resume();
+            }
 
-        osc.type = "sine";
-        const now = ctx.currentTime;
-        osc.frequency.setValueAtTime(1800, now);
-        osc.frequency.exponentialRampToValueAtTime(400, now + 0.35);
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
 
-        gain.gain.setValueAtTime(0.08, now);
-        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+            osc.type = "sine";
+            const now = ctx.currentTime;
+            osc.frequency.setValueAtTime(1800, now);
+            osc.frequency.exponentialRampToValueAtTime(400, now + 0.35);
 
-        osc.connect(gain);
-        gain.connect(ctx.destination);
+            gain.gain.setValueAtTime(0.15, now);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
 
-        osc.start(now);
-        osc.stop(now + 0.35);
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 0.35);
+        } catch (err) {
+            console.error('[Audio] Radar ping error:', err);
+        }
     }
 }
 

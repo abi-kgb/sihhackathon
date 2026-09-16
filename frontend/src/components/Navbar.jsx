@@ -111,8 +111,8 @@ export default function Navbar({ stats, isMuted, onToggleMute, activeThreatsCoun
                 </div>
             </div>
 
-            {/* Right: Sound Toggle, Clock, Connection Status */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* Right: Sound Toggle, Test Siren, Clock, Connection Status */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <button
                     onClick={onToggleMute}
                     className="btn-secondary"
@@ -130,6 +130,22 @@ export default function Navbar({ stats, isMuted, onToggleMute, activeThreatsCoun
                     <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)' }}>
                         {isMuted ? 'MUTED' : 'AUDIO ON'}
                     </span>
+                </button>
+
+                <button
+                    onClick={() => tacticalSound.playCriticalAlarm()}
+                    className="btn-tactical"
+                    style={{
+                        padding: '5px 9px',
+                        fontSize: '0.72rem',
+                        background: 'rgba(255, 42, 95, 0.15)',
+                        borderColor: 'rgba(255, 42, 95, 0.4)',
+                        color: 'var(--accent-crimson)',
+                        cursor: 'pointer'
+                    }}
+                    title="Test Alarm Sound Siren"
+                >
+                    TEST SIREN 🔊
                 </button>
 
                 <div style={{ textAlign: 'right', borderLeft: '1px solid var(--border-color)', paddingLeft: '14px' }}>
