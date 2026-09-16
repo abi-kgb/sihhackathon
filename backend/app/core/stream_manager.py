@@ -296,9 +296,9 @@ class CameraStreamWorker:
                 matched_vehicle = None
                 plate_text = ""
 
-                # 1. ANPR Vehicle Plate Analysis & Whitelist Verification with Track Caching (0ms latency)
+                # 1. ANPR Vehicle Plate Analysis & Whitelist Verification with Instant Recognition
                 if is_vehicle and (x2 - x1) > 25 and (y2 - y1) > 25:
-                    if tid in self.track_plate_cache and (fps_counter % 20 != 0):
+                    if tid in self.track_plate_cache and self.track_plate_cache[tid].get("plate_text") and (fps_counter % 30 != 0):
                         cached = self.track_plate_cache[tid]
                         plate_text = cached.get("plate_text", "")
                         matched_vehicle = cached.get("matched_vehicle")
@@ -317,19 +317,20 @@ class CameraStreamWorker:
                             if any(w in cat for w in ["patrol", "whitelist", "auth", "friendly", "safe", "vip", "official", "resident"]) or threat in ["AUTHORIZED", "LOW", "SAFE", "NONE"]:
                                 is_authorized_friendly_vehicle = True
 
-                        self.track_plate_cache[tid] = {
-                            "plate_text": plate_text,
-                            "matched_vehicle": matched_vehicle,
-                            "is_authorized": is_authorized_friendly_vehicle
-                        }
+                        if plate_text:
+                            self.track_plate_cache[tid] = {
+                                "plate_text": plate_text,
+                                "matched_vehicle": matched_vehicle,
+                                "is_authorized": is_authorized_friendly_vehicle
+                            }
 
                 is_authorized_friendly_person = False
                 matched_person = None
                 person_name = ""
 
-                # 2. FRS Person Face Analysis & Whitelist Verification with Track Caching
+                # 2. FRS Person Face Analysis & Whitelist Verification with Instant Recognition
                 if cname == "person" and (x2 - x1) > 25 and (y2 - y1) > 25:
-                    if tid in self.track_person_cache and (fps_counter % 20 != 0):
+                    if tid in self.track_person_cache and self.track_person_cache[tid].get("matched_person") and (fps_counter % 30 != 0):
                         cached_p = self.track_person_cache[tid]
                         matched_person = cached_p.get("matched_person")
                         is_authorized_friendly_person = cached_p.get("is_authorized", False)
@@ -348,11 +349,11 @@ class CameraStreamWorker:
                                 if any(w in p_cat for w in ["staff", "whitelist", "auth", "friendly", "safe", "vip", "official", "resident", "guard", "patrol"]) or p_threat in ["AUTHORIZED", "LOW", "SAFE", "NONE"]:
                                     is_authorized_friendly_person = True
 
-                        self.track_person_cache[tid] = {
-                            "matched_person": matched_person,
-                            "is_authorized": is_authorized_friendly_person,
-                            "person_name": person_name
-                        }
+                                self.track_person_cache[tid] = {
+                                    "matched_person": matched_person,
+                                    "is_authorized": is_authorized_friendly_person,
+                                    "person_name": person_name
+                                }
 
                 # Helper to create snapshot with highlighted target
                 def _get_evidence_snapshot(target_label: str, target_color: Tuple[int, int, int] = (0, 0, 255)):
