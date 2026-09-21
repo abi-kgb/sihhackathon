@@ -398,7 +398,9 @@ def process_browser_webcam_frame(
                 threat_color = (0, 255, 157) # Neon Green / Friendly
                 p_name = matched_person.get("name") or person_name or "STAFF"
                 p_cat = (matched_person.get("category") or "WHITELIST").replace('_', ' ').upper()
-                label = f"AUTHORIZED: {p_name} [{p_cat}]"
+                sim_pct = int(matched_person.get("similarity", 0.0) * 100)
+                sim_str = f" ({sim_pct}%)" if sim_pct > 0 else ""
+                label = f"AUTHORIZED: {p_name}{sim_str} [{p_cat}]"
             elif matched_vehicle:
                 threat_color = (0, 0, 255) # Red / Hotlist Alert
                 p_num = matched_vehicle.get("plate_number") or plate_text

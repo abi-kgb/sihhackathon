@@ -63,7 +63,7 @@ class FacialRecognitionEngine:
         self,
         face_crop: np.ndarray,
         watchlist: List[Dict[str, Any]],
-        similarity_threshold: float = 0.55
+        similarity_threshold: float = 0.65
     ) -> Optional[Dict[str, Any]]:
         """
         Matches a detected face crop against registered watchlist persons.
@@ -125,7 +125,7 @@ class FacialRecognitionEngine:
         self,
         person_crop: np.ndarray,
         watchlist: List[Dict[str, Any]],
-        similarity_threshold: float = 0.55
+        similarity_threshold: float = 0.65
     ) -> Optional[Dict[str, Any]]:
         """
         Matches face ONLY if an actual face is detected within the person crop.
