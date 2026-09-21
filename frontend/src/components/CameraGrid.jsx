@@ -22,9 +22,11 @@ import {
     Plus,
     Trash2,
     Check,
-    Move
+    Move,
+    UserCheck,
+    UserPlus
 } from 'lucide-react';
-import { cameraService, alertService, zoneService, api } from '../services/api';
+import { cameraService, alertService, zoneService, watchlistService, api } from '../services/api';
 
 export default function CameraGrid({
     cameras,
@@ -58,6 +60,39 @@ export default function CameraGrid({
     const [useBrowserWebcam, setUseBrowserWebcam] = useState(false);
     const [annotatedFrameUrl, setAnnotatedFrameUrl] = useState(null);
     const [webcamError, setWebcamError] = useState(null);
+
+    // Live Face Capture & Instant Watchlist Registration State
+    const [capturingFace, setCapturingFace] = useState(false);
+    const [showFaceModal, setShowFaceModal] = useState(false);
+    const [capturedFaces, setCapturedFaces] = useState([]);
+    const [selectedFaceIdx, setSelectedFaceIdx] = useState(0);
+    const [faceForm, setFaceForm] = useState({
+        name: '',
+        alias: '',
+        category: 'staff',
+        threat_level: 'AUTHORIZED',
+        notes: ''
+    });
+    const [savingFace, setSavingFace] = useState(false);
+    const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+
+    // Live Plate Capture & Instant Hotlist Registration State
+    const [capturingPlate, setCapturingPlate] = useState(false);
+    const [showPlateModal, setShowPlateModal] = useState(false);
+    const [capturedPlates, setCapturedPlates] = useState([]);
+    const [selectedPlateIdx, setSelectedPlateIdx] = useState(0);
+    const [plateForm, setPlateForm] = useState({
+        plate_number: '',
+        vehicle_type: 'SUV',
+        color: 'Black',
+        make_model: 'Mahindra Scorpio',
+        owner_name: '',
+        category: 'patrol',
+        threat_level: 'AUTHORIZED',
+        notes: ''
+    });
+    const [savingPlate, setSavingPlate] = useState(false);
+    const [savePlateSuccessMsg, setSavePlateSuccessMsg] = useState('');
 
     // Direct Zone Drawing, Dotted Vector Lines & Draggable Handles
     const [isDrawingMode, setIsDrawingMode] = useState(false);
@@ -471,9 +506,161 @@ export default function CameraGrid({
             await alertService.simulate(alertType);
             setStreamKey(Date.now());
         } catch (err) {
-            console.error('Simulation trigger failed', err);
+            console.error('Failed to simulate event', err);
         } finally {
             setSimulating(false);
+        }
+    };
+
+    const handleCaptureFace = async () => {
+        try {
+            setCapturingFace(true);
+            setSaveSuccessMsg('');
+            let imageBase64 = null;
+
+            if (useBrowserWebcam && videoRef.current && videoRef.current.readyState >= 2) {
+                const video = videoRef.current;
+                const canvas = canvasRef.current || document.createElement('canvas');
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                imageBase64 = canvas.toDataURL('image/jpeg', 0.90);
+            }
+
+            const res = await cameraService.captureFace(primaryCamera.id, imageBase64);
+            if (res.data?.faces && res.data.faces.length > 0) {
+                setCapturedFaces(res.data.faces);
+                setSelectedFaceIdx(0);
+                setFaceForm({
+                    name: '',
+                    alias: '',
+                    category: 'staff',
+                    threat_level: 'AUTHORIZED',
+                    notes: `Biometric face captured from ${primaryCamera.name} on ${new Date().toLocaleTimeString()}`
+                });
+                setShowFaceModal(true);
+            } else {
+                alert('No human face detected in the current camera frame. Please position yourself facing the camera and try again.');
+            }
+        } catch (err) {
+            console.error('Failed to capture face', err);
+            alert('Failed to capture face from camera stream: ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setCapturingFace(false);
+        }
+    };
+
+    const handleSaveCapturedFace = async (e) => {
+        e.preventDefault();
+        if (!faceForm.name.trim()) {
+            alert('Please enter a name for the person');
+            return;
+        }
+
+        const face = capturedFaces[selectedFaceIdx];
+        if (!face) return;
+
+        try {
+            setSavingFace(true);
+            await watchlistService.registerPersonDirect({
+                name: faceForm.name.trim(),
+                alias: faceForm.alias || null,
+                category: faceForm.category,
+                threat_level: faceForm.threat_level,
+                notes: faceForm.notes || null,
+                photo_url: face.photo_url,
+                face_embedding: face.face_embedding,
+                is_active: true
+            });
+
+            setSaveSuccessMsg(`✓ Successfully registered "${faceForm.name}" as [${faceForm.category.toUpperCase()}] with 128-D biometric vector!`);
+            setTimeout(() => {
+                setShowFaceModal(false);
+                setSaveSuccessMsg('');
+            }, 1800);
+        } catch (err) {
+            console.error('Failed to save face to watchlist', err);
+            alert('Error saving person: ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setSavingFace(false);
+        }
+    };
+
+    const handleCapturePlate = async () => {
+        try {
+            setCapturingPlate(true);
+            setSavePlateSuccessMsg('');
+            let imageBase64 = null;
+
+            if (useBrowserWebcam && videoRef.current && videoRef.current.readyState >= 2) {
+                const video = videoRef.current;
+                const canvas = canvasRef.current || document.createElement('canvas');
+                canvas.width = video.videoWidth || 640;
+                canvas.height = video.videoHeight || 480;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                imageBase64 = canvas.toDataURL('image/jpeg', 0.90);
+            }
+
+            const res = await cameraService.capturePlate(primaryCamera.id, imageBase64);
+            if (res.data?.plates && res.data.plates.length > 0) {
+                setCapturedPlates(res.data.plates);
+                setSelectedPlateIdx(0);
+                const firstPlate = res.data.plates[0];
+                setPlateForm({
+                    plate_number: firstPlate.plate_text || '',
+                    vehicle_type: firstPlate.vehicle_type || 'SUV',
+                    color: 'Black',
+                    make_model: 'Patrol Vehicle / Registered',
+                    owner_name: 'Border Security Patrol Unit',
+                    category: 'patrol',
+                    threat_level: 'AUTHORIZED',
+                    notes: `Plate isolated from ${primaryCamera.name} on ${new Date().toLocaleTimeString()}`
+                });
+                setShowPlateModal(true);
+            } else {
+                alert('No vehicle or license plate detected in the current camera frame.');
+            }
+        } catch (err) {
+            console.error('Failed to capture plate', err);
+            alert('Failed to capture plate from camera: ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setCapturingPlate(false);
+        }
+    };
+
+    const handleSaveCapturedPlate = async (e) => {
+        e.preventDefault();
+        if (!plateForm.plate_number.trim()) {
+            alert('Please enter a license plate number');
+            return;
+        }
+
+        try {
+            setSavingPlate(true);
+            await watchlistService.createVehicle({
+                plate_number: plateForm.plate_number.trim(),
+                vehicle_type: plateForm.vehicle_type,
+                color: plateForm.color,
+                make_model: plateForm.make_model,
+                owner_name: plateForm.owner_name || null,
+                category: plateForm.category,
+                threat_level: plateForm.threat_level,
+                notes: plateForm.notes || null,
+                is_active: true
+            });
+
+            setSavePlateSuccessMsg(`✓ Successfully registered plate "${plateForm.plate_number.toUpperCase()}" as [${plateForm.category.toUpperCase()}]!`);
+            setTimeout(() => {
+                setShowPlateModal(false);
+                setSavePlateSuccessMsg('');
+            }, 1800);
+        } catch (err) {
+            console.error('Failed to save vehicle plate', err);
+            alert('Error saving vehicle plate: ' + (err.response?.data?.detail || err.message));
+        } finally {
+            setSavingPlate(false);
         }
     };
 
@@ -572,7 +759,7 @@ export default function CameraGrid({
                     </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                     <button
                         onClick={handleSwitchToWebcam}
                         className={`btn-tactical ${useBrowserWebcam ? '' : 'btn-secondary'}`}
@@ -580,6 +767,42 @@ export default function CameraGrid({
                     >
                         <Camera size={14} />
                         <span>LIVE WEBCAM</span>
+                    </button>
+
+                    <button
+                        onClick={handleCaptureFace}
+                        disabled={capturingFace}
+                        className="btn-tactical"
+                        style={{
+                            padding: '6px 14px',
+                            fontSize: '0.78rem',
+                            background: 'rgba(0, 240, 255, 0.15)',
+                            borderColor: 'var(--accent-cyan)',
+                            color: 'var(--accent-cyan)',
+                            fontWeight: '700'
+                        }}
+                        title="Detect and isolate face crop alone for Watchlist / Biometric Registry"
+                    >
+                        <UserPlus size={14} />
+                        <span>{capturingFace ? 'ISOLATING FACE...' : '📸 CAPTURE FACE'}</span>
+                    </button>
+
+                    <button
+                        onClick={handleCapturePlate}
+                        disabled={capturingPlate}
+                        className="btn-tactical"
+                        style={{
+                            padding: '6px 14px',
+                            fontSize: '0.78rem',
+                            background: 'rgba(0, 255, 157, 0.15)',
+                            borderColor: 'var(--accent-green)',
+                            color: 'var(--accent-green)',
+                            fontWeight: '700'
+                        }}
+                        title="Detect and isolate license plate alone for ANPR Registry / Hotlists"
+                    >
+                        <Car size={14} />
+                        <span>{capturingPlate ? 'READING PLATE...' : '🚗 CAPTURE PLATE'}</span>
                     </button>
 
                     <input
@@ -968,6 +1191,565 @@ export default function CameraGrid({
                     </div>
                 </div>
             </div>
+
+            {/* ISOLATED FACE CAPTURE & REGISTRATION MODAL */}
+            {showFaceModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.88)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 110,
+                    padding: '20px'
+                }}>
+                    <div className="tactical-card" style={{
+                        maxWidth: '720px',
+                        width: '100%',
+                        maxHeight: '92vh',
+                        overflowY: 'auto',
+                        padding: '22px',
+                        backgroundColor: 'var(--bg-secondary)',
+                        border: '1px solid var(--accent-cyan)',
+                        boxShadow: '0 0 25px rgba(0, 240, 255, 0.25)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <Camera size={22} color="var(--accent-cyan)" />
+                                <div>
+                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#fff', letterSpacing: '0.5px' }}>
+                                        BIOMETRIC FACE ISOLATION & DOSSIER REGISTRY
+                                    </h3>
+                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                                        EXTRACTED CLEAN FACE CROP ALONE (NO BACKGROUND) FOR WATCHLIST & FORENSIC DATABASE
+                                    </span>
+                                </div>
+                            </div>
+                            <button onClick={() => setShowFaceModal(false)} className="btn-tactical btn-secondary" style={{ padding: '4px 8px' }}>
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        {saveSuccessMsg && (
+                            <div style={{
+                                padding: '12px',
+                                marginBottom: '16px',
+                                backgroundColor: 'rgba(0, 255, 157, 0.15)',
+                                border: '1px solid var(--accent-green)',
+                                borderRadius: '4px',
+                                color: 'var(--accent-green)',
+                                fontSize: '0.85rem',
+                                fontWeight: '700'
+                            }}>
+                                {saveSuccessMsg}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '20px' }}>
+                            {/* Left: Isolated Face Crop & Biometric Badge */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                {capturedFaces[selectedFaceIdx] && (
+                                    <div style={{
+                                        width: '190px',
+                                        height: '210px',
+                                        borderRadius: '6px',
+                                        overflow: 'hidden',
+                                        border: '2px solid var(--accent-cyan)',
+                                        boxShadow: '0 0 15px rgba(0, 240, 255, 0.3)',
+                                        backgroundColor: '#000',
+                                        position: 'relative'
+                                    }}>
+                                        <img
+                                            src={capturedFaces[selectedFaceIdx].face_base64 || capturedFaces[selectedFaceIdx].photo_url}
+                                            alt="Isolated Face Crop"
+                                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                        />
+                                        <div style={{
+                                            position: 'absolute',
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                            padding: '4px',
+                                            background: 'rgba(0,0,0,0.75)',
+                                            fontSize: '0.65rem',
+                                            textAlign: 'center',
+                                            fontFamily: 'var(--font-mono)',
+                                            color: 'var(--accent-cyan)'
+                                        }}>
+                                            ISOLATED FACE CROP
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div style={{
+                                    padding: '6px 10px',
+                                    borderRadius: '4px',
+                                    background: 'rgba(0, 255, 157, 0.1)',
+                                    border: '1px solid var(--accent-green)',
+                                    color: 'var(--accent-green)',
+                                    fontSize: '0.7rem',
+                                    fontWeight: '700',
+                                    textAlign: 'center',
+                                    width: '100%'
+                                }}>
+                                    ✓ 128-D Vector Extracted
+                                </div>
+
+                                {/* Multi-face Selector if more than 1 face */}
+                                {capturedFaces.length > 1 && (
+                                    <div style={{ width: '100%' }}>
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                                            DETECTED FACES ({capturedFaces.length}):
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+                                            {capturedFaces.map((f, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    type="button"
+                                                    onClick={() => setSelectedFaceIdx(idx)}
+                                                    style={{
+                                                        width: '44px',
+                                                        height: '44px',
+                                                        borderRadius: '4px',
+                                                        overflow: 'hidden',
+                                                        border: selectedFaceIdx === idx ? '2px solid var(--accent-green)' : '1px solid var(--border-color)',
+                                                        padding: 0,
+                                                        background: '#000',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    <img src={f.face_base64} alt={`Face ${idx+1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Right: Registration Form */}
+                            <form onSubmit={handleSaveCapturedFace} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                        FULL NAME *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        className="form-control"
+                                        placeholder="e.g. Officer Rajesh Kumar / Suspect-A"
+                                        value={faceForm.name}
+                                        onChange={(e) => setFaceForm({ ...faceForm, name: e.target.value })}
+                                        required
+                                        style={{ width: '100%', padding: '8px 12px', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                            CATEGORY *
+                                        </label>
+                                        <select
+                                            className="form-control"
+                                            value={faceForm.category}
+                                            onChange={(e) => {
+                                                const cat = e.target.value;
+                                                const isAuth = ['staff', 'vip_authorized', 'resident', 'official'].includes(cat);
+                                                setFaceForm({
+                                                    ...faceForm,
+                                                    category: cat,
+                                                    threat_level: isAuth ? 'AUTHORIZED' : 'CRITICAL'
+                                                });
+                                            }}
+                                            style={{ width: '100%', padding: '8px', fontSize: '0.85rem' }}
+                                        >
+                                            <optgroup label="Authorized Personnel (Silences Alarms)">
+                                                <option value="staff">Staff / Border Security Force</option>
+                                                <option value="vip_authorized">VIP / Military Official</option>
+                                                <option value="resident">Registered Border Resident</option>
+                                            </optgroup>
+                                            <optgroup label="Threat / POI Watchlist (Triggers Siren)">
+                                                <option value="cross_border_infiltrator">Cross-Border Infiltrator</option>
+                                                <option value="wanted_terrorist">Wanted Terrorist</option>
+                                                <option value="smuggler">Contraband Smuggler</option>
+                                                <option value="suspect">Suspect / Person of Interest</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                            THREAT LEVEL *
+                                        </label>
+                                        <select
+                                            className="form-control"
+                                            value={faceForm.threat_level}
+                                            onChange={(e) => setFaceForm({ ...faceForm, threat_level: e.target.value })}
+                                            style={{ width: '100%', padding: '8px', fontSize: '0.85rem' }}
+                                        >
+                                            <option value="AUTHORIZED">AUTHORIZED (Safe / Whitelisted)</option>
+                                            <option value="SAFE">SAFE (Low / Monitored)</option>
+                                            <option value="CRITICAL">CRITICAL (Red Hotlist Breach)</option>
+                                            <option value="HIGH">HIGH (Immediate Response)</option>
+                                            <option value="MEDIUM">MEDIUM</option>
+                                            <option value="LOW">LOW</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                        ALIAS / BADGE / IDENTIFIER
+                                    </label>
+                                    <input
+                                        type="text"
+                                        className="form-control"
+                                        placeholder="e.g. Unit-7 Commander / Code X-99"
+                                        value={faceForm.alias}
+                                        onChange={(e) => setFaceForm({ ...faceForm, alias: e.target.value })}
+                                        style={{ width: '100%', padding: '8px 12px', fontSize: '0.85rem' }}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                        DOSSIER / OPERATOR NOTES
+                                    </label>
+                                    <textarea
+                                        className="form-control"
+                                        rows={2}
+                                        value={faceForm.notes}
+                                        onChange={(e) => setFaceForm({ ...faceForm, notes: e.target.value })}
+                                        style={{ width: '100%', padding: '8px 12px', fontSize: '0.8rem' }}
+                                    />
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                                    <button
+                                        type="submit"
+                                        disabled={savingFace}
+                                        className="btn-tactical"
+                                        style={{
+                                            flex: 1,
+                                            padding: '10px',
+                                            fontSize: '0.88rem',
+                                            background: faceForm.threat_level === 'AUTHORIZED' ? 'rgba(0, 255, 157, 0.2)' : 'rgba(255, 42, 95, 0.2)',
+                                            borderColor: faceForm.threat_level === 'AUTHORIZED' ? 'var(--accent-green)' : 'var(--accent-crimson)',
+                                            color: faceForm.threat_level === 'AUTHORIZED' ? 'var(--accent-green)' : 'var(--accent-crimson)',
+                                            fontWeight: '700'
+                                        }}
+                                    >
+                                        <UserCheck size={16} />
+                                        <span>{savingFace ? 'SAVING TO DATABASE...' : 'SAVE TO WATCHLIST DATABASE'}</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowFaceModal(false)}
+                                        className="btn-tactical btn-secondary"
+                                        style={{ padding: '10px 16px' }}
+                                    >
+                                        CANCEL
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ISOLATED LICENSE PLATE CAPTURE & HOTLIST REGISTRATION MODAL */}
+            {showPlateModal && (
+                <div style={{
+                    position: 'fixed',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    backgroundColor: 'rgba(0, 0, 0, 0.88)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 110,
+                    padding: '20px'
+                }}>
+                    <div className="tactical-card" style={{
+                        maxWidth: '720px',
+                        width: '100%',
+                        maxHeight: '92vh',
+                        overflowY: 'auto',
+                        padding: '22px',
+                        backgroundColor: 'var(--bg-secondary)',
+                        border: '1px solid var(--accent-green)',
+                        boxShadow: '0 0 25px rgba(0, 255, 157, 0.25)'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '16px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                <Car size={22} color="var(--accent-green)" />
+                                <div>
+                                    <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#fff', letterSpacing: '0.5px' }}>
+                                        ANPR LICENSE PLATE ISOLATION & REGISTRY
+                                    </h3>
+                                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                                        EXTRACTED LICENSE PLATE CROP ALONE WITH AUTOMATED OCR CHARACTER RECOGNITION
+                                    </span>
+                                </div>
+                            </div>
+                            <button onClick={() => setShowPlateModal(false)} className="btn-tactical btn-secondary" style={{ padding: '4px 8px' }}>
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        {savePlateSuccessMsg && (
+                            <div style={{
+                                padding: '12px',
+                                marginBottom: '16px',
+                                backgroundColor: 'rgba(0, 255, 157, 0.15)',
+                                border: '1px solid var(--accent-green)',
+                                borderRadius: '4px',
+                                color: 'var(--accent-green)',
+                                fontSize: '0.85rem',
+                                fontWeight: '700'
+                            }}>
+                                {savePlateSuccessMsg}
+                            </div>
+                        )}
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: '20px' }}>
+                            {/* Left: Isolated License Plate Crop */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                {capturedPlates[selectedPlateIdx] && (
+                                    <div style={{
+                                        width: '100%',
+                                        height: '110px',
+                                        borderRadius: '6px',
+                                        overflow: 'hidden',
+                                        border: '2px solid var(--accent-green)',
+                                        boxShadow: '0 0 15px rgba(0, 255, 157, 0.3)',
+                                        backgroundColor: '#000',
+                                        position: 'relative',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center'
+                                    }}>
+                                        <img
+                                            src={capturedPlates[selectedPlateIdx].plate_base64 || capturedPlates[selectedPlateIdx].photo_url}
+                                            alt="Isolated License Plate Crop"
+                                            style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                                        />
+                                        <div style={{
+                                            position: 'absolute',
+                                            bottom: 0,
+                                            left: 0,
+                                            right: 0,
+                                            padding: '3px',
+                                            background: 'rgba(0,0,0,0.8)',
+                                            fontSize: '0.62rem',
+                                            textAlign: 'center',
+                                            fontFamily: 'var(--font-mono)',
+                                            color: 'var(--accent-green)'
+                                        }}>
+                                            ISOLATED PLATE REGION
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div style={{
+                                    padding: '8px 10px',
+                                    borderRadius: '4px',
+                                    background: 'rgba(0, 240, 255, 0.1)',
+                                    border: '1px solid var(--accent-cyan)',
+                                    textAlign: 'center',
+                                    width: '100%'
+                                }}>
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>RECOGNIZED PLATE TEXT:</div>
+                                    <div style={{ fontSize: '1.05rem', fontWeight: '800', fontFamily: 'var(--font-mono)', color: 'var(--accent-cyan)', letterSpacing: '1px', marginTop: '2px' }}>
+                                        {capturedPlates[selectedPlateIdx]?.plate_text || 'OCR SCANNING'}
+                                    </div>
+                                </div>
+
+                                {/* Multi-plate Selector if more than 1 vehicle */}
+                                {capturedPlates.length > 1 && (
+                                    <div style={{ width: '100%' }}>
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginBottom: '6px' }}>
+                                            DETECTED VEHICLES ({capturedPlates.length}):
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+                                            {capturedPlates.map((p, idx) => (
+                                                <button
+                                                    key={idx}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setSelectedPlateIdx(idx);
+                                                        setPlateForm({ ...plateForm, plate_number: p.plate_text });
+                                                    }}
+                                                    style={{
+                                                        width: '56px',
+                                                        height: '36px',
+                                                        borderRadius: '4px',
+                                                        overflow: 'hidden',
+                                                        border: selectedPlateIdx === idx ? '2px solid var(--accent-green)' : '1px solid var(--border-color)',
+                                                        padding: 0,
+                                                        background: '#000',
+                                                        cursor: 'pointer'
+                                                    }}
+                                                >
+                                                    <img src={p.plate_base64} alt={`Plate ${idx+1}`} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Right: Registration Form */}
+                            <form onSubmit={handleSaveCapturedPlate} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                        LICENSE / VEHICLE NUMBER PLATE *
+                                    </label>
+                                    <input
+                                        type="text"
+                                        className="form-control"
+                                        placeholder="e.g. DL01AB1234 / JK02BB9999"
+                                        value={plateForm.plate_number}
+                                        onChange={(e) => setPlateForm({ ...plateForm, plate_number: e.target.value.toUpperCase() })}
+                                        required
+                                        style={{ width: '100%', padding: '8px 12px', fontSize: '0.95rem', fontWeight: '700', fontFamily: 'var(--font-mono)', letterSpacing: '1px' }}
+                                    />
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                            CATEGORY *
+                                        </label>
+                                        <select
+                                            className="form-control"
+                                            value={plateForm.category}
+                                            onChange={(e) => {
+                                                const cat = e.target.value;
+                                                const isAuth = ['patrol', 'vip_authorized', 'resident', 'official'].includes(cat);
+                                                setPlateForm({
+                                                    ...plateForm,
+                                                    category: cat,
+                                                    threat_level: isAuth ? 'AUTHORIZED' : 'HIGH'
+                                                });
+                                            }}
+                                            style={{ width: '100%', padding: '8px', fontSize: '0.85rem' }}
+                                        >
+                                            <optgroup label="Authorized Vehicles (Silences Alarms)">
+                                                <option value="patrol">Patrol / Border Security Vehicle</option>
+                                                <option value="vip_authorized">VIP Official / Defense Convoy</option>
+                                                <option value="resident">Registered Local Resident</option>
+                                            </optgroup>
+                                            <optgroup label="Hotlist / Flagged Threats (Triggers Siren)">
+                                                <option value="suspected_smuggling">Suspected Smuggling Vehicle</option>
+                                                <option value="stolen_vehicle">Stolen / Flagged Vehicle</option>
+                                                <option value="unauthorized_military">Unauthorized Military / Threat</option>
+                                            </optgroup>
+                                        </select>
+                                    </div>
+
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                            THREAT LEVEL *
+                                        </label>
+                                        <select
+                                            className="form-control"
+                                            value={plateForm.threat_level}
+                                            onChange={(e) => setPlateForm({ ...plateForm, threat_level: e.target.value })}
+                                            style={{ width: '100%', padding: '8px', fontSize: '0.85rem' }}
+                                        >
+                                            <option value="AUTHORIZED">AUTHORIZED (Safe / Whitelisted)</option>
+                                            <option value="SAFE">SAFE (Low / Monitored)</option>
+                                            <option value="CRITICAL">CRITICAL (Red Hotlist Breach)</option>
+                                            <option value="HIGH">HIGH (Immediate Interception)</option>
+                                            <option value="MEDIUM">MEDIUM</option>
+                                            <option value="LOW">LOW</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                            MAKE & MODEL
+                                        </label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            placeholder="e.g. Mahindra Scorpio / Tata Safari"
+                                            value={plateForm.make_model}
+                                            onChange={(e) => setPlateForm({ ...plateForm, make_model: e.target.value })}
+                                            style={{ width: '100%', padding: '8px 12px', fontSize: '0.85rem' }}
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                            OWNER / FLEET UNIT
+                                        </label>
+                                        <input
+                                            type="text"
+                                            className="form-control"
+                                            placeholder="e.g. Sector 4 Patrol Fleet"
+                                            value={plateForm.owner_name}
+                                            onChange={(e) => setPlateForm({ ...plateForm, owner_name: e.target.value })}
+                                            style={{ width: '100%', padding: '8px 12px', fontSize: '0.85rem' }}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: '700', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                                        NOTES / REGISTRATION DETAILS
+                                    </label>
+                                    <textarea
+                                        className="form-control"
+                                        rows={2}
+                                        value={plateForm.notes}
+                                        onChange={(e) => setPlateForm({ ...plateForm, notes: e.target.value })}
+                                        style={{ width: '100%', padding: '8px 12px', fontSize: '0.8rem' }}
+                                    />
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                                    <button
+                                        type="submit"
+                                        disabled={savingPlate}
+                                        className="btn-tactical"
+                                        style={{
+                                            flex: 1,
+                                            padding: '10px',
+                                            fontSize: '0.88rem',
+                                            background: plateForm.threat_level === 'AUTHORIZED' ? 'rgba(0, 255, 157, 0.2)' : 'rgba(255, 42, 95, 0.2)',
+                                            borderColor: plateForm.threat_level === 'AUTHORIZED' ? 'var(--accent-green)' : 'var(--accent-crimson)',
+                                            color: plateForm.threat_level === 'AUTHORIZED' ? 'var(--accent-green)' : 'var(--accent-crimson)',
+                                            fontWeight: '700'
+                                        }}
+                                    >
+                                        <Check size={16} />
+                                        <span>{savingPlate ? 'SAVING TO REGISTRY...' : 'SAVE TO VEHICLE WATCHLIST'}</span>
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPlateModal(false)}
+                                        className="btn-tactical btn-secondary"
+                                        style={{ padding: '10px 16px' }}
+                                    >
+                                        CANCEL
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* PITCH SUMMARY MODAL FOR EVALUATORS */}
             {showPitchModal && (

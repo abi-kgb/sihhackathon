@@ -54,7 +54,10 @@ async def create_watchlist_person(
                 fx, fy, fw, fh = faces[0]
                 face_crop = img[fy:fy+fh, fx:fx+fw]
                 emb = frs_engine.extract_face_embedding(face_crop)
-                embedding_json = json.dumps(emb.tolist())
+            else:
+                # Direct face crop fallback so portrait/cropped uploads extract vector reliably
+                emb = frs_engine.extract_face_embedding(img)
+            embedding_json = json.dumps(emb.tolist())
 
     person = WatchlistPerson(
         name=name,
@@ -66,6 +69,17 @@ async def create_watchlist_person(
         photo_url=photo_url,
         face_embedding=embedding_json
     )
+    db.add(person)
+    db.commit()
+    db.refresh(person)
+    return person
+
+@router.post("/persons/register-direct", response_model=WatchlistPersonOut)
+def register_person_direct(
+    person_in: WatchlistPersonCreate,
+    db: Session = Depends(get_db)
+):
+    person = WatchlistPerson(**person_in.model_dump())
     db.add(person)
     db.commit()
     db.refresh(person)

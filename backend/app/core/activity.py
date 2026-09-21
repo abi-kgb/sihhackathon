@@ -9,7 +9,7 @@ class ActivityAnalyticsEngine:
     - Sudden panic running / rapid unauthorized crossing
     - Stationary/unattended objects
     """
-    def __init__(self, loiter_threshold_sec: float = 6.0, run_velocity_threshold: float = 0.08):
+    def __init__(self, loiter_threshold_sec: float = 25.0, run_velocity_threshold: float = 0.50):
         self.loiter_threshold_sec = loiter_threshold_sec
         self.run_velocity_threshold = run_velocity_threshold
         # Stores track_id -> {'first_seen': timestamp, 'last_seen': timestamp, 'positions': [(x,y,t)], 'alerted': set()}
@@ -48,15 +48,14 @@ class ActivityAnalyticsEngine:
         
         anomalies = []
 
-        # 1. Loitering Detection
+        # 1. Loitering Detection (Requires 25s+ dwell and continuous presence)
         if dwell_time >= self.loiter_threshold_sec and "LOITERING" not in history["alerted"]:
-            # Check displacement to ensure object is actually lingering in a localized area
             positions = history["positions"]
-            if len(positions) >= 5:
+            if len(positions) >= 15:
                 dx = positions[-1][0] - positions[0][0]
                 dy = positions[-1][1] - positions[0][1]
                 net_displacement = (dx**2 + dy**2) ** 0.5
-                if net_displacement < 0.25:  # has not moved far across the scene
+                if net_displacement < 0.15:  # has not moved far across the scene
                     history["alerted"].add("LOITERING")
                     anomalies.append({
                         "type": "SUSPICIOUS_LOITERING",
@@ -67,8 +66,8 @@ class ActivityAnalyticsEngine:
 
         # 2. Night Stealth Crawling / Crouching Detection
         if class_name == "person":
-            # Normal standing person has aspect ratio ~ 0.3 - 0.5. Crawling/crouching person has aspect ratio >= 0.85
-            if aspect_ratio >= 0.85 and "STEALTH_CRAWL" not in history["alerted"]:
+            # Normal standing person has aspect ratio ~ 0.3 - 0.5. Crawling/crouching person has aspect ratio >= 0.95
+            if aspect_ratio >= 0.95 and "STEALTH_CRAWL" not in history["alerted"]:
                 history["alerted"].add("STEALTH_CRAWL")
                 anomalies.append({
                     "type": "NIGHT_STEALTH_MOVEMENT",
@@ -77,15 +76,15 @@ class ActivityAnalyticsEngine:
                     "aspect_ratio": round(aspect_ratio, 2)
                 })
 
-        # 3. Panic Running / Sprinting Velocity
+        # 3. Panic Running / Sprinting Velocity (Requires significant continuous displacement across scene)
         positions = history["positions"]
-        if len(positions) >= 4 and "PANIC_RUN" not in history["alerted"]:
+        if len(positions) >= 8 and "PANIC_RUN" not in history["alerted"]:
             p_curr = positions[-1]
-            p_prev = positions[-4]
-            dt = max(p_curr[2] - p_prev[2], 0.1)
+            p_prev = positions[-8]
+            dt = max(p_curr[2] - p_prev[2], 0.2)
             dist = ((p_curr[0] - p_prev[0])**2 + (p_curr[1] - p_prev[1])**2) ** 0.5
             velocity = dist / dt  # normalized units per second
-            if velocity >= self.run_velocity_threshold:
+            if dist >= 0.20 and velocity >= self.run_velocity_threshold:
                 history["alerted"].add("PANIC_RUN")
                 anomalies.append({
                     "type": "PANIC_RUNNING",

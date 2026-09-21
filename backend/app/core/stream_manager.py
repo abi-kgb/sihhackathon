@@ -22,6 +22,12 @@ from ..config import settings
 from ..database import SessionLocal
 from ..models import Camera, VirtualZone, Alert, WatchlistPerson, WatchlistVehicle, SystemLog
 
+# Shared High-Throughput Analytics Singletons (Prevents multi-worker CPU & RAM contention)
+_shared_detector = ObjectDetector()
+_shared_frs_engine = FacialRecognitionEngine()
+_shared_anpr_engine = ANPREngine()
+_shared_night_enhancer = NightVisionEnhancer()
+
 class CameraStreamWorker:
     """
     Thread-safe worker that captures, processes, and annotates frames for a single camera feed.
@@ -40,14 +46,14 @@ class CameraStreamWorker:
         self.source_changed: bool = False
         self.cap: Optional[cv2.VideoCapture] = None
 
-        # Analytics Components
-        self.detector = ObjectDetector()
+        # Analytics Components (Shared heavy neural models)
+        self.detector = _shared_detector
         self.tracker = SimpleTracker()
         self.fence_engine = VirtualFenceEngine()
-        self.frs_engine = FacialRecognitionEngine()
-        self.anpr_engine = ANPREngine()
+        self.frs_engine = _shared_frs_engine
+        self.anpr_engine = _shared_anpr_engine
         self.activity_engine = ActivityAnalyticsEngine()
-        self.night_enhancer = NightVisionEnhancer()
+        self.night_enhancer = _shared_night_enhancer
         self.simulator = BorderStreamSimulator(camera_id=self.camera_id, scenario_type="perimeter")
 
         # Alert & Telemetry State
@@ -225,6 +231,12 @@ class CameraStreamWorker:
             person_watchlist = cached_person_watchlist
             vehicle_watchlist = cached_vehicle_watchlist
 
+            if self.stream_type == "webcam":
+                # In browser webcam mode, live frames are ingested directly via process_browser_webcam_frame.
+                # Idle background thread to prevent generating ghost synthetic intruders.
+                time.sleep(0.08)
+                continue
+
             frame = None
             if self.cap and self.cap.isOpened():
                 try:
@@ -296,63 +308,91 @@ class CameraStreamWorker:
                 matched_vehicle = None
                 plate_text = ""
 
-                # 1. ANPR Vehicle Plate Analysis & Whitelist Verification with Instant Recognition
+                # 1. ANPR Vehicle Plate Analysis & Whitelist Verification with Persistent Track Memory
                 if is_vehicle and (x2 - x1) > 25 and (y2 - y1) > 25:
-                    if tid in self.track_plate_cache and self.track_plate_cache[tid].get("plate_text") and (fps_counter % 30 != 0):
+                    last_scan_frame = 0
+                    if tid in self.track_plate_cache:
                         cached = self.track_plate_cache[tid]
                         plate_text = cached.get("plate_text", "")
                         matched_vehicle = cached.get("matched_vehicle")
                         is_authorized_friendly_vehicle = cached.get("is_authorized", False)
-                    else:
+                        last_scan_frame = cached.get("last_scan_frame", 0)
+
+                    # Only perform heavy OCR on new tracks or once every 60 frames
+                    should_scan_plate = (tid not in self.track_plate_cache) or ((fps_counter - last_scan_frame >= 60) and not matched_vehicle)
+                    if should_scan_plate:
                         v_crop = frame[y1:y2, x1:x2]
                         plate_res = self.anpr_engine.detect_plate_region(v_crop)
                         plate_crop = plate_res[0] if plate_res else None
-                        plate_text = self.anpr_engine.extract_plate_text(plate_crop, vehicle_crop=v_crop)
+                        extracted_text = self.anpr_engine.extract_plate_text(plate_crop, vehicle_crop=v_crop)
+                        if extracted_text:
+                            plate_text = extracted_text
                         
-                        matched_vehicle = self.anpr_engine.match_watchlist(plate_text, vehicle_watchlist)
+                        if plate_text:
+                            found_vehicle = self.anpr_engine.match_watchlist(plate_text, vehicle_watchlist)
+                            if found_vehicle:
+                                matched_vehicle = found_vehicle
+
                         if matched_vehicle:
                             cat = (matched_vehicle.get("category") or "").lower()
                             threat = (matched_vehicle.get("threat_level") or "").upper()
-                            if any(w in cat for w in ["patrol", "whitelist", "auth", "friendly", "safe", "vip", "official", "resident"]) or threat in ["AUTHORIZED", "LOW", "SAFE", "NONE"]:
+                            is_hostile_v = any(h in cat for h in ["smuggl", "stolen", "unauthorized", "hostile", "threat", "suspect", "wanted"])
+                            is_friendly_v = any(w in cat for w in ["patrol", "whitelist", "auth", "friendly", "safe", "vip", "official", "resident", "registered"])
+                            if (not is_hostile_v) and (is_friendly_v or threat in ["AUTHORIZED", "SAFE", "WHITELIST"]):
                                 is_authorized_friendly_vehicle = True
+                            else:
+                                is_authorized_friendly_vehicle = False
 
-                        if plate_text:
-                            self.track_plate_cache[tid] = {
-                                "plate_text": plate_text,
-                                "matched_vehicle": matched_vehicle,
-                                "is_authorized": is_authorized_friendly_vehicle
-                            }
+                        self.track_plate_cache[tid] = {
+                            "plate_text": plate_text,
+                            "matched_vehicle": matched_vehicle,
+                            "is_authorized": is_authorized_friendly_vehicle,
+                            "last_scan_frame": fps_counter
+                        }
 
                 is_authorized_friendly_person = False
                 matched_person = None
                 person_name = ""
 
-                # 2. FRS Person Face Analysis & Whitelist Verification with Instant Recognition
+                # 2. FRS Person Face Analysis & Whitelist Verification with Persistent Track Memory
                 if cname == "person" and (x2 - x1) > 25 and (y2 - y1) > 25:
-                    if tid in self.track_person_cache and self.track_person_cache[tid].get("matched_person") and (fps_counter % 30 != 0):
+                    last_p_scan = 0
+                    if tid in self.track_person_cache:
                         cached_p = self.track_person_cache[tid]
                         matched_person = cached_p.get("matched_person")
                         is_authorized_friendly_person = cached_p.get("is_authorized", False)
                         person_name = cached_p.get("person_name", "")
-                    else:
+                        last_p_scan = cached_p.get("last_scan_frame", 0)
+
+                    # Only perform face recognition on new tracks or once every 45 frames
+                    should_scan_person = (tid not in self.track_person_cache) or ((fps_counter - last_p_scan >= 45) and not matched_person)
+                    if should_scan_person:
                         p_crop = frame[y1:y2, x1:x2]
                         faces = self.frs_engine.detect_faces(p_crop)
+                        found_person = None
                         if faces:
                             fx, fy, fw, fh = faces[0]
                             face_crop = p_crop[fy:fy+fh, fx:fx+fw]
-                            matched_person = self.frs_engine.match_face(face_crop, person_watchlist)
-                            if matched_person:
-                                p_cat = (matched_person.get("category") or "").lower()
-                                p_threat = (matched_person.get("threat_level") or "").upper()
-                                person_name = matched_person.get("name") or "Authorized"
-                                if any(w in p_cat for w in ["staff", "whitelist", "auth", "friendly", "safe", "vip", "official", "resident", "guard", "patrol"]) or p_threat in ["AUTHORIZED", "LOW", "SAFE", "NONE"]:
-                                    is_authorized_friendly_person = True
+                            found_person = self.frs_engine.match_face(face_crop, person_watchlist)
 
-                                self.track_person_cache[tid] = {
-                                    "matched_person": matched_person,
-                                    "is_authorized": is_authorized_friendly_person,
-                                    "person_name": person_name
-                                }
+                        if found_person:
+                            matched_person = found_person
+                            p_cat = (matched_person.get("category") or "").lower()
+                            p_threat = (matched_person.get("threat_level") or "").upper()
+                            person_name = matched_person.get("name") or "Authorized Personnel"
+                            is_hostile_p = any(h in p_cat for h in ["infiltrator", "terrorist", "smuggler", "wanted", "suspect", "criminal", "poi"])
+                            is_friendly_p = any(w in p_cat for w in ["staff", "whitelist", "auth", "friendly", "safe", "vip", "official", "resident", "guard", "patrol", "registered"])
+                            if (not is_hostile_p) and (is_friendly_p or p_threat in ["AUTHORIZED", "SAFE", "WHITELIST"]):
+                                is_authorized_friendly_person = True
+                            else:
+                                is_authorized_friendly_person = False
+
+                        self.track_person_cache[tid] = {
+                            "matched_person": matched_person,
+                            "is_authorized": is_authorized_friendly_person,
+                            "person_name": person_name,
+                            "last_scan_frame": fps_counter
+                        }
 
                 # Helper to create snapshot with highlighted target
                 def _get_evidence_snapshot(target_label: str, target_color: Tuple[int, int, int] = (0, 0, 255)):
@@ -363,8 +403,8 @@ class CameraStreamWorker:
                     cv2.putText(snap, lbl, (x1 + 4, max(14, y1 - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
                     return snap
 
-                # 3. Activity & Behavioral Anomaly Check (only for verified persons/vehicles)
-                if (cname == "person" or is_vehicle) and conf >= 0.45:
+                # 3. Activity & Behavioral Anomaly Check (suppressed for authorized personnel/vehicles)
+                if (not is_authorized_friendly_person) and (not is_authorized_friendly_vehicle) and (cname == "person" or is_vehicle) and conf >= 0.45:
                     behavior = self.activity_engine.update_track(tid, bbox, cname)
                     for anomaly in behavior["anomalies"]:
                         threat_color = (0, 0, 255)
@@ -383,7 +423,7 @@ class CameraStreamWorker:
                             )
                         active_alerts.append(anomaly["type"])
 
-                # 4. Virtual Zones Check (Intrusion alerts suppressed for authorized friendly persons & vehicles)
+                # 4. Virtual Zones Check (Intrusion alerts completely suppressed for registered authorized faces and vehicles)
                 if (not is_authorized_friendly_vehicle) and (not is_authorized_friendly_person) and (cname == "person" or is_vehicle):
                     car_tag = plate_text if plate_text else f"CAR-#{tid}"
                     for z in zones:
@@ -459,16 +499,16 @@ class CameraStreamWorker:
                     threat_color = (0, 255, 157) # Neon Green / Friendly
                     p_num = matched_vehicle.get("plate_number") or plate_text
                     owner = matched_vehicle.get("owner_name") or "PATROL"
-                    label = f"AUTHORIZED: {p_num} [{owner}]"
+                    label = f"AUTHORIZED VEHICLE: {p_num} [{owner}]"
                 elif is_authorized_friendly_person and matched_person:
                     threat_color = (0, 255, 157) # Neon Green / Friendly
-                    p_name = matched_person.get("name") or "STAFF"
-                    p_cat = (matched_person.get("category") or "WHITELIST").upper()
+                    p_name = matched_person.get("name") or person_name or "STAFF"
+                    p_cat = (matched_person.get("category") or "WHITELIST").replace('_', ' ').upper()
                     label = f"AUTHORIZED: {p_name} [{p_cat}]"
                 elif matched_vehicle:
                     threat_color = (0, 0, 255) # Red / Hotlist Alert
                     p_num = matched_vehicle.get("plate_number") or plate_text
-                    cat = (matched_vehicle.get("category") or "THREAT").upper()
+                    cat = (matched_vehicle.get("category") or "THREAT").replace('_', ' ').upper()
                     label = f"HOTLIST: {p_num} ({cat})"
                     if cam:
                         self._trigger_alert(
@@ -487,7 +527,7 @@ class CameraStreamWorker:
                 elif matched_person:
                     threat_color = (0, 0, 255) # Red / POI Alert
                     p_name = matched_person.get("name") or "SUSPECT"
-                    cat = (matched_person.get("category") or "POI").upper()
+                    cat = (matched_person.get("category") or "POI").replace('_', ' ').upper()
                     label = f"POI: {p_name} ({cat})"
                     if cam:
                         self._trigger_alert(
@@ -508,9 +548,10 @@ class CameraStreamWorker:
                     if plate_text:
                         label += f" [{plate_text}]"
 
+                is_friendly = is_authorized_friendly_vehicle or is_authorized_friendly_person
                 cv2.rectangle(annotated, (x1, y1), (x2, y2), threat_color, 2)
                 cv2.rectangle(annotated, (x1, y1 - 18), (x1 + len(label) * 8 + 10, y1), threat_color, -1)
-                text_color = (0, 0, 0) if is_authorized_friendly_vehicle else (255, 255, 255)
+                text_color = (0, 0, 0) if is_friendly else (255, 255, 255)
                 cv2.putText(annotated, label, (x1 + 4, y1 - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, text_color, 1)
 
             self.activity_engine.clean_stale_tracks()
@@ -536,7 +577,8 @@ class CameraStreamWorker:
             }
 
             elapsed = time.time() - t_start
-            sleep_time = max(0, (1.0 / 25.0) - elapsed)
+            target_fps = 25.0 if self.stream_type in ["file", "rtsp", "webcam"] else 6.0
+            sleep_time = max(0.001, (1.0 / target_fps) - elapsed)
             time.sleep(sleep_time)
 
         with self.lock:

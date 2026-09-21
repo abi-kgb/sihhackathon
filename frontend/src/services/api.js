@@ -35,6 +35,8 @@ export const cameraService = {
     },
 
     getUploadedVideos: () => api.get('/cameras/uploaded-videos/list'),
+    captureFace: (id, imageBase64 = null) => api.post(`/cameras/${id}/capture-face`, { image_base64: imageBase64 }),
+    capturePlate: (id, imageBase64 = null) => api.post(`/cameras/${id}/capture-plate`, { image_base64: imageBase64 }),
 };
 
 export const zoneService = {
@@ -50,6 +52,7 @@ export const watchlistService = {
     createPerson: (formData) => api.post('/watchlists/persons', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
     }),
+    registerPersonDirect: (data) => api.post('/watchlists/persons/register-direct', data),
     deletePerson: (id) => api.delete(`/watchlists/persons/${id}`),
     
     getVehicles: () => api.get('/watchlists/vehicles'),

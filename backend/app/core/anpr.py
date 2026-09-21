@@ -85,10 +85,15 @@ class ANPREngine:
             except Exception:
                 pass
 
-        # Attempt 2: Direct OCR on full vehicle crop (CRAFT text detector locates plate anywhere on car)
+        # Attempt 2: Direct OCR on resized vehicle crop fallback
         target_img = vehicle_crop if (vehicle_crop is not None and vehicle_crop.size > 0) else plate_crop
         if target_img is not None and target_img.size > 0:
             try:
+                # Fast downscale vehicle crop for CPU CRAFT detector
+                th, tw = target_img.shape[:2]
+                if tw > 320:
+                    scale = 320.0 / tw
+                    target_img = cv2.resize(target_img, (320, max(20, int(th * scale))))
                 results = self.ocr_reader.readtext(target_img)
                 candidates = []
                 for bbox, text, prob in results:
